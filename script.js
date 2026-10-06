@@ -52,10 +52,20 @@
   ];
   const CN2_OPEN = '2026-10-10';
 
+  /* ---------- chạy từng khối độc lập ----------
+     Mỗi khối bọc try/catch riêng: 1 khối lỗi (ví dụ thiếu
+     1 phần tử HTML) chỉ in lỗi ra Console, không làm hỏng
+     các khối khác (đặc biệt là hiệu ứng sparkles ở cuối file). */
+  function chay(ten, fn) {
+    try { return fn(); }
+    catch (e) { console.error(`[Dany] Lỗi ở khối "${ten}":`, e); }
+  }
+
   /* ---------- helpers ---------- */
   const toast = $('#toast');
   let toastTimer;
   function say(msg) {
+    if (!toast) return;
     toast.textContent = msg;
     toast.classList.add('show');
     clearTimeout(toastTimer);
@@ -64,33 +74,26 @@
 
   /* ---------- theme ---------- */
   const root = document.documentElement;
-  try { const t = localStorage.getItem('dany_theme'); if (t) root.dataset.theme = t; } catch (e) {}
-  $('#themeBtn').addEventListener('click', () => {
-    const isLight = root.dataset.theme
-      ? root.dataset.theme === 'light'
-      : matchMedia('(prefers-color-scheme: light)').matches;
-    const next = isLight ? 'dark' : 'light';
-    root.dataset.theme = next;
-    try { localStorage.setItem('dany_theme', next); } catch (e) {}
-  });
   const isLightTheme = () => (root.dataset.theme ? root.dataset.theme === 'light' : matchMedia('(prefers-color-scheme: light)').matches);
+  chay('theme', () => {
+    try { const t = localStorage.getItem('dany_theme'); if (t) root.dataset.theme = t; } catch (e) {}
+    const btn = $('#themeBtn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const next = isLightTheme() ? 'dark' : 'light';
+      root.dataset.theme = next;
+      try { localStorage.setItem('dany_theme', next); } catch (e) {}
+    });
+  });
 
   /* ---------- page curtain + smooth nav ---------- */
   const curtain = $('#curtain');
-  function endIntro() {
-    curtain.classList.remove('in');
-    curtain.classList.add('out');
-    setTimeout(() => { curtain.classList.add('instant'); curtain.classList.remove('out'); void curtain.offsetWidth; curtain.classList.remove('instant'); }, 750);
-  }
-  window.addEventListener('load', () => setTimeout(endIntro, reduce ? 0 : 500));
-  setTimeout(() => { if (curtain.classList.contains('in')) endIntro(); }, 3500);
-
   let busy = false;
   function goTo(hash) {
     const target = hash === '#top' ? document.body : $(hash);
     if (!target || busy) return;
     const y = hash === '#top' ? 0 : target.getBoundingClientRect().top + scrollY - 70;
-    if (reduce) { scrollTo(0, y); return; }
+    if (reduce || !curtain) { scrollTo(0, y); return; }
     busy = true;
     curtain.classList.remove('out');
     curtain.classList.add('in');
@@ -101,6 +104,16 @@
       setTimeout(() => { curtain.classList.add('instant'); curtain.classList.remove('out'); void curtain.offsetWidth; curtain.classList.remove('instant'); busy = false; }, 700);
     }, 700);
   }
+  chay('curtain', () => {
+    if (!curtain) return;
+    function endIntro() {
+      curtain.classList.remove('in');
+      curtain.classList.add('out');
+      setTimeout(() => { curtain.classList.add('instant'); curtain.classList.remove('out'); void curtain.offsetWidth; curtain.classList.remove('instant'); }, 750);
+    }
+    window.addEventListener('load', () => setTimeout(endIntro, reduce ? 0 : 500));
+    setTimeout(() => { if (curtain.classList.contains('in')) endIntro(); }, 3500);
+  });
   document.addEventListener('click', (e) => {
     const a = e.target.closest('a[data-go]');
     if (!a) return;
@@ -109,23 +122,25 @@
   });
 
   /* ---------- scroll: progress, nav hide, active link ---------- */
-  const bar = $('#progress');
-  const nav = $('#nav');
-  const navLinks = $$('.links a');
-  const sections = navLinks.map((a) => $(a.getAttribute('href')));
-  let lastY = 0, ticking = false;
-  function onScroll() {
-    const max = document.documentElement.scrollHeight - innerHeight;
-    bar.style.transform = `scaleX(${max > 0 ? scrollY / max : 0})`;
-    nav.classList.toggle('hide', scrollY > lastY && scrollY > 400);
-    lastY = scrollY;
-    let cur = -1;
-    sections.forEach((s, i) => { if (s && s.getBoundingClientRect().top < innerHeight * 0.4) cur = i; });
-    navLinks.forEach((a, i) => a.classList.toggle('active', i === cur));
-    ticking = false;
-  }
-  addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }, { passive: true });
-  onScroll();
+  chay('scroll-progress', () => {
+    const bar = $('#progress');
+    const nav = $('#nav');
+    const navLinks = $$('.links a');
+    const sections = navLinks.map((a) => $(a.getAttribute('href')));
+    let lastY = 0, ticking = false;
+    function onScroll() {
+      const max = document.documentElement.scrollHeight - innerHeight;
+      if (bar) bar.style.transform = `scaleX(${max > 0 ? scrollY / max : 0})`;
+      if (nav) nav.classList.toggle('hide', scrollY > lastY && scrollY > 400);
+      lastY = scrollY;
+      let cur = -1;
+      sections.forEach((s, i) => { if (s && s.getBoundingClientRect().top < innerHeight * 0.4) cur = i; });
+      navLinks.forEach((a, i) => a.classList.toggle('active', i === cur));
+      ticking = false;
+    }
+    addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }, { passive: true });
+    onScroll();
+  });
 
   /* ---------- reveal ---------- */
   function observeReveals(scope = document) {
@@ -148,36 +163,42 @@
 
   /* ---------- render menu ---------- */
   const menuList = $('#menuList');
-  menuList.innerHTML = MENU.map((m) => `
-    <article class="glass menu-card reveal" data-tilt>
-      <span class="ico" aria-hidden="true">${m.mark}</span>
-      <div><h3>${m.name}</h3><p>${MENU_NOTE}</p></div>
-      <div class="price"><b>${m.price}K</b><button class="pick" type="button" data-service="${m.id}">Chọn dịch vụ</button></div>
-    </article>`).join('');
+  chay('render-menu', () => {
+    menuList.innerHTML = MENU.map((m) => `
+      <article class="glass menu-card reveal" data-tilt>
+        <span class="ico" aria-hidden="true">${m.mark}</span>
+        <div><h3>${m.name}</h3><p>${MENU_NOTE}</p></div>
+        <div class="price"><b>${m.price}K</b><button class="pick" type="button" data-service="${m.id}">Chọn dịch vụ</button></div>
+      </article>`).join('');
+  });
 
   /* ---------- render price list ---------- */
-  $('#priceGrid').innerHTML = PRICES.map((g) => `
-    <article class="glass price-card reveal" data-tilt>
-      <h3>${g.group}</h3>
-      <ul>${g.items.map(([name, price]) => `<li><span>${name}</span><i></i><b>${price}</b></li>`).join('')}</ul>
-    </article>`).join('');
+  chay('render-price', () => {
+    $('#priceGrid').innerHTML = PRICES.map((g) => `
+      <article class="glass price-card reveal" data-tilt>
+        <h3>${g.group}</h3>
+        <ul>${g.items.map(([name, price]) => `<li><span>${name}</span><i></i><b>${price}</b></li>`).join('')}</ul>
+      </article>`).join('');
+  });
 
   /* ---------- render BTS ---------- */
-  $('#btsGrid').innerHTML = LOOKS.map((l, i) => `
-    <div class="flip card3d reveal" data-tilt tabindex="0" role="button" aria-pressed="false" aria-label="Lật thẻ ${l.title}">
-      <div class="flip-inner">
-        <div class="face front">
-          <img src="assets/${l.img}" alt="Mẫu nail ${l.title}" loading="lazy">
-          <div class="cap"><h3>${l.title}</h3><span>${l.sub}</span></div>
+  chay('render-bts', () => {
+    $('#btsGrid').innerHTML = LOOKS.map((l, i) => `
+      <div class="flip card3d reveal" data-tilt tabindex="0" role="button" aria-pressed="false" aria-label="Lật thẻ ${l.title}">
+        <div class="flip-inner">
+          <div class="face front">
+            <img src="assets/${l.img}" alt="Mẫu nail ${l.title}" loading="lazy">
+            <div class="cap"><h3>${l.title}</h3><span>${l.sub}</span></div>
+          </div>
+          <div class="face back">
+            <div class="chips">${l.tags.map((t) => `<span>${t}</span>`).join('')}</div>
+            <h3>${l.title}</h3>
+            <p>${l.mood}</p>
+            <div class="swatches">${l.sw.map((c) => `<i style="background:${c}"></i>`).join('')}</div>
+          </div>
         </div>
-        <div class="face back">
-          <div class="chips">${l.tags.map((t) => `<span>${t}</span>`).join('')}</div>
-          <h3>${l.title}</h3>
-          <p>${l.mood}</p>
-          <div class="swatches">${l.sw.map((c) => `<i style="background:${c}"></i>`).join('')}</div>
-        </div>
-      </div>
-    </div>`).join('');
+      </div>`).join('');
+  });
 
   /* flip cards */
   function toggleFlip(el) {
@@ -190,7 +211,8 @@
   });
 
   /* ---------- tilt ---------- */
-  if (fine && !reduce) {
+  chay('tilt', () => {
+    if (!(fine && !reduce)) return;
     document.addEventListener('pointermove', (e) => {
       if (e.pointerType !== 'mouse') return;
       const el = e.target.closest && e.target.closest('[data-tilt]');
@@ -214,6 +236,7 @@
     document.addEventListener('pointerleave', () => $$('[data-tilt].is-tilting').forEach(resetTilt));
 
     const hero = $('#top'), deck = $('#deck');
+    if (!hero || !deck) return;
     hero.addEventListener('pointermove', (e) => {
       const r = hero.getBoundingClientRect();
       const px = (e.clientX - r.left) / r.width - 0.5;
@@ -222,7 +245,7 @@
       deck.style.setProperty('--rx', `${(-py * 22).toFixed(1)}deg`);
     });
     hero.addEventListener('pointerleave', () => { deck.style.removeProperty('--ry'); deck.style.removeProperty('--rx'); });
-  }
+  });
 
   /* ---------- copy ---------- */
   document.addEventListener('click', (e) => {
@@ -246,8 +269,9 @@
     const m = now.getHours() * 60 + now.getMinutes();
     const open = m >= OPEN * 60 && m < CLOSE * 60;
     const st = $('#openStatus');
-    st.classList.toggle('open', open);
-    $('#openText').textContent = open ? 'Đang mở cửa, đóng lúc 21:00' : (m < OPEN * 60 ? 'Chưa mở cửa, mở lúc 09:00' : 'Đã đóng cửa, mở lại 09:00 sáng mai');
+    const txt = $('#openText');
+    if (st) st.classList.toggle('open', open);
+    if (txt) txt.textContent = open ? 'Đang mở cửa, đóng lúc 21:00' : (m < OPEN * 60 ? 'Chưa mở cửa, mở lúc 09:00' : 'Đã đóng cửa, mở lại 09:00 sáng mai');
   }
 
   /* ---------- booking ---------- */
@@ -284,6 +308,7 @@
   let selHour = null;
   let selService = MENU[0].id;
 
+  chay('booking', () => {
   const serviceSel = $('#fService');
   serviceSel.innerHTML =
     '<optgroup label="Combo Giáng Sinh">' +
@@ -391,9 +416,12 @@
     form.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
   });
 
-  renderDates(); renderSlots(); renderToday(); renderOpen();
-  observeReveals();
+  renderDates(); renderSlots(); renderToday();
   setInterval(() => { renderOpen(); renderSlots(); renderToday(); }, 60000);
+  }); // hết khối booking
+
+  chay('open-status', renderOpen);
+  chay('reveal', observeReveals);
 
   /* ---------- sparkles ---------- */
   const cv = $('#sparkles');
